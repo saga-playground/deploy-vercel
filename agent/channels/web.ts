@@ -383,6 +383,26 @@ POST /eve/v1/dev/schedules/:scheduleId
 
     function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
 
+    async function readStream(streamRes, onEvent) {
+      const reader = streamRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try { onEvent(JSON.parse(line)); } catch(e) {}
+        }
+      }
+      if (buffer.trim()) {
+        try { onEvent(JSON.parse(buffer)); } catch(e) {}
+      }
+    }
+
     async function sendMessage() {
       const input = document.getElementById('chatInput');
       const message = input.value.trim();
@@ -405,28 +425,24 @@ POST /eve/v1/dev/schedules/:scheduleId
         if (!res.ok) { addMessage('assistant', 'Error ' + res.status + ': ' + await res.text()); updateStatus(false, 'Error'); return; }
         const data = await res.json();
         state.sessionId = data.sessionId || state.sessionId;
+        state.continuationToken = data.continuationToken || state.continuationToken;
         updateStatus(true, 'Streaming...');
         updateSessionInfo();
         const streamRes = await fetch(base + '/eve/v1/session/' + state.sessionId + '/stream');
-        const reader = streamRes.body.getReader();
-        const decoder = new TextDecoder();
-        let assistantContent = '', buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\\n'); buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const ev = JSON.parse(line);
-              if (ev.type === 'message.delta' && ev.content) assistantContent += ev.content;
-              else if (ev.type === 'tool.start') addMessage('assistant', 'Tool: ' + ev.name, true);
-              else if (ev.type === 'tool.end' && ev.output) addMessage('assistant', 'Result: ' + JSON.stringify(ev.output, null, 2), true);
-              else if (ev.type === 'message.end') state.continuationToken = ev.continuationToken || state.continuationToken;
-            } catch(e) {}
+        let assistantContent = '';
+        await readStream(streamRes, function(ev) {
+          if (ev.type === 'text.delta') assistantContent += (ev.delta || '');
+          else if (ev.type === 'message.appended') assistantContent += (ev.delta || ev.text || '');
+          else if (ev.type === 'actions.requested' && ev.actions) {
+            ev.actions.forEach(function(a) { addMessage('assistant', 'Tool: ' + (a.name || a.tool || 'unknown'), true); });
           }
-        }
+          else if (ev.type === 'action.result') {
+            addMessage('assistant', 'Result: ' + JSON.stringify(ev.result || ev.output || ev, null, 2), true);
+          }
+          else if (ev.type === 'session.completed' || ev.type === 'session.waiting') {
+            state.continuationToken = ev.continuationToken || state.continuationToken;
+          }
+        });
         if (assistantContent) { addMessage('assistant', assistantContent); state.messageCount++; }
         updateStatus(true, 'Connected'); updateSessionInfo();
       } catch(e) { addMessage('assistant', 'Network error: ' + e.message); updateStatus(false, 'Disconnected'); }
@@ -455,17 +471,20 @@ POST /eve/v1/dev/schedules/:scheduleId
       output.textContent = 'Loading...'; output.classList.add('streaming');
       try {
         const res = await fetch(base+'/eve/v1/session', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({message:message}) });
-        if (!res.ok) { output.textContent = 'Error '+res.status; output.classList.remove('streaming'); return; }
+        if (!res.ok) { output.textContent = 'Error '+res.status+': '+await res.text(); output.classList.remove('streaming'); return; }
         const data = await res.json();
         const sr = await fetch(base+'/eve/v1/session/'+data.sessionId+'/stream');
-        const reader = sr.body.getReader(); const decoder = new TextDecoder();
-        let result = '', buf = '';
-        while (true) {
-          const {done, value} = await reader.read(); if (done) break;
-          buf += decoder.decode(value, {stream:true});
-          const lines = buf.split('\\n'); buf = lines.pop()||'';
-          for (const line of lines) { if (!line.trim()) continue; try { const ev=JSON.parse(line); if(ev.type==='message.delta') result+=ev.content||''; if(ev.type==='tool.start') result+='\\n['+ev.name+'] '; if(ev.type==='tool.end') result+= JSON.stringify(ev.output)+'\\n'; } catch(e){} }
-        }
+        let result = '';
+        await readStream(sr, function(ev) {
+          if (ev.type === 'text.delta') result += (ev.delta || '');
+          else if (ev.type === 'message.appended') result += (ev.delta || ev.text || '');
+          else if (ev.type === 'actions.requested' && ev.actions) {
+            ev.actions.forEach(function(a) { result += '\\n[' + (a.name || a.tool || '') + '] '; });
+          }
+          else if (ev.type === 'action.result') {
+            result += JSON.stringify(ev.result || ev.output || ev, null, 2) + '\\n';
+          }
+        });
         output.textContent = result || '(no output)';
       } catch(e) { output.textContent = 'Error: '+e.message+'\\n\\nMake sure ANTHROPIC_API_KEY is set in Vercel env vars.'; }
       output.classList.remove('streaming');
@@ -476,7 +495,7 @@ POST /eve/v1/dev/schedules/:scheduleId
       output.textContent = 'Triggering...';
       try {
         const res = await fetch(getApiBase()+'/eve/v1/dev/schedules/'+id, {method:'POST'});
-        output.textContent = res.ok ? 'Triggered! ' + JSON.stringify(await res.json(),null,2) : 'Error: '+res.status;
+        output.textContent = res.ok ? 'Triggered! ' + JSON.stringify(await res.json(),null,2) : 'Error '+res.status+': '+await res.text();
       } catch(e) { output.textContent = 'Error: '+e.message; }
     }
 
