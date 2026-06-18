@@ -8,6 +8,7 @@
   "dependencies": {
     "eve": "latest",
     "ai": "latest",
-    "zod": "latest"
+    "zod": "latest",
+    "@ai-sdk/anthropic": "latest"
   }
 }
