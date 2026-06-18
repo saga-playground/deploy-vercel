@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/eve/:path*", "destination": "/eve/:path*" },
+    { "source": "/(.*)", "destination": "/public/$1" }
+  ]
+}

@@ -229,7 +229,7 @@
       <h1>🤖 Eve Framework Demo</h1>
       <p>一个包含全部子功能的交互式测试界面 — 边测试边学习</p>
       <p style="margin-top: 8px; font-size: 0.9em; color: var(--text-dim);">
-        API Base: <input id="apiBase" value="http://127.0.0.1:3000" style="width: 240px; display: inline-block;">
+        API Base: <input id="apiBase" value="" style="width: 240px; display: inline-block;" placeholder="留空则使用当前域名">
       </p>
     </header>
 
@@ -619,7 +619,8 @@ Messages: 0
     };
 
     function getApiBase() {
-      return document.getElementById('apiBase').value.replace(/\/$/, '');
+      const val = document.getElementById('apiBase').value.replace(/\/$/, '');
+      return val || window.location.origin;
     }
 
     function updateStatus(connected, text) {
