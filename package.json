@@ -1,0 +1,13 @@
+{
+  "name": "eve-full-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx eve dev"
+  },
+  "dependencies": {
+    "eve": "latest",
+    "ai": "latest",
+    "zod": "latest"
+  }
+}
